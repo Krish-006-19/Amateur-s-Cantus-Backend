@@ -9,16 +9,14 @@ const {
   updatePlays
 } = require("../controllers/music.controller.js");
 
-const { requireAuth } = require("../clerk");
+router.get("/", getApprovedMusicList);
 
-router.get("/", requireAuth, getApprovedMusicList);
+router.patch("/:id/like", updateLikes);
+router.patch("/:id/play", updatePlays);
 
-router.patch("/:id/like", requireAuth, updateLikes);
-router.patch("/:id/play", requireAuth, updatePlays);
+router.get("/:id", getApprovedMusicById);
+router.patch("/:id", updateMusic);
 
-router.get("/:id", requireAuth, getApprovedMusicById);
-router.patch("/:id", requireAuth, updateMusic);
-
-router.post("/", requireAuth, createMusic);
+router.post("/", createMusic);
 
 module.exports = router;

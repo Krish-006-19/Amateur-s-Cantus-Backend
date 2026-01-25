@@ -6,10 +6,8 @@ const {
     removeFromPlaylist,
 } = require("../controllers/consumer.controller");
 
-const { requireAuth } = require("../clerk");
-
-router.get("/:id", requireAuth, getConsumerById);
-router.post("/playlist/:consumerId/:musicId", requireAuth, addToPlaylist);
-router.post("/playlist/:consumerId/dislike", requireAuth, removeFromPlaylist);
+router.get("/:id", getConsumerById);
+router.post("/playlist/:consumerId/:musicId", addToPlaylist);
+router.post("/playlist/:consumerId/dislike", removeFromPlaylist);
 
 module.exports = router;

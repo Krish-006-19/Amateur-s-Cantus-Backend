@@ -6,10 +6,9 @@ const {
     incrementHeartsReceived,
 } = require('../controllers/artist.controller.js');
 
-const { requireAuth } = require('../clerk');
 
-router.get('/', requireAuth, getAllActiveArtists);
-router.get('/:id', requireAuth, getActiveArtistById);
-router.patch('/:id', requireAuth, incrementHeartsReceived);
+router.get('/', getAllActiveArtists);
+router.get('/:id', getActiveArtistById);
+router.patch('/:id', incrementHeartsReceived);
 
 module.exports = router;

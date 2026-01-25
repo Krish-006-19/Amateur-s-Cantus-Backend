@@ -3,8 +3,6 @@ const express = require("express");
 const app = express();
 const port = 3000;
 const mongoose = require("mongoose");
-const { clerkMiddleware, requireAuth, getAuth } = require("@clerk/express");
-app.use(clerkMiddleware())
 app.use(require("cookie-parser")());
 app.use(require("cors")());
 app.use(express.urlencoded({ extended: true }));

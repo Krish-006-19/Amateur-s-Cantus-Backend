@@ -1,5 +1,4 @@
 const Artist = require('../models/artist.model');
-const User = require('../models/user.model');
 
 async function getAllActiveArtists(req, res) {
     try {
@@ -7,10 +6,7 @@ async function getAllActiveArtists(req, res) {
             .populate('details')
             .sort({ heartsReceived: -1, reports: 1 });
 
-        if (!artists.length)
-            return res.status(404).json({ message: 'No artists found' });
-
-        res.status(200).json(artists);
+        res.status(200).json(artists || []);
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
@@ -34,9 +30,6 @@ async function getActiveArtistById(req, res) {
 
 async function incrementHeartsReceived(req, res) {
     try {
-        // Clerk identity enforced
-        const user = await requireUser(req);
-
         const updatedArtist = await Artist.findOneAndUpdate(
             { _id: req.params.id, status: "active" },
             { $inc: { heartsReceived: 1 } },
@@ -48,7 +41,7 @@ async function incrementHeartsReceived(req, res) {
 
         res.status(200).json(updatedArtist);
     } catch (err) {
-        res.status(err.status || 500).json({ message: err.message });
+        res.status(500).json({ message: err.message });
     }
 }
 

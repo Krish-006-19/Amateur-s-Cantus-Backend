@@ -1,5 +1,7 @@
 const express = require("express");
 const router = express.Router();
+const { optionalUser, requireUser } = require('../middlewares/auth');
+const { uploadMusicFields } = require('../middlewares/multer');
 const {
   getApprovedMusicList,
   getApprovedMusicById,
@@ -11,12 +13,13 @@ const {
 
 router.get("/", getApprovedMusicList);
 
-router.patch("/:id/like", updateLikes);
-router.patch("/:id/play", updatePlays);
+router.patch("/:id/like", optionalUser, updateLikes);
+router.patch("/:id/play", optionalUser, updatePlays);
 
 router.get("/:id", getApprovedMusicById);
-router.patch("/:id", updateMusic);
+router.patch("/:id", requireUser, updateMusic);
 
-router.post("/", createMusic);
+// Upload a song (multipart form-data: audio, image, title, genre, description, isPolicyAccepted, artistId?)
+router.post("/", optionalUser, uploadMusicFields, createMusic);
 
 module.exports = router;

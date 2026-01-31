@@ -1,192 +1,225 @@
 const Report = require('../models/report.model');
 const Artist = require('../models/artist.model');
 const Music = require('../models/music.model');
-const User = require('../models/user.model');
+const Auth = require('../models/auth.model');
+const bcrypt = require('bcrypt');
+
+const STRIKES_TO_DEACTIVATE = Number(process.env.STRIKES_TO_DEACTIVATE || 5);
 
 async function getPendingReports(req, res) {
     try {
-        await requireAdmin(req);
-
-        const reports = await Report.find({ status: 'pending' });
-        if (!reports.length)
-            return res.status(404).json({ message: 'No pending reports found' });
+        const reports = await Report.find({ status: 'pending' })
+            .populate({ path: 'reportedBy', populate: { path: 'details', select: 'username email' } })
+            .populate({ path: 'reportedAgainst', populate: { path: 'details', select: 'username profileImage' } })
+            .populate({ path: 'music' })
+            .sort({ createdAt: -1 });
 
         res.status(200).json(reports);
     } catch (err) {
-        res.status(err.status || 500).json({ message: err.message });
+        res.status(500).json({ message: err.message });
+    }
+}
+
+/** All reports (all statuses) for admin */
+async function getAllReports(req, res) {
+    try {
+        const reports = await Report.find({})
+            .populate({ path: 'reportedBy', populate: { path: 'details', select: 'username email' } })
+            .populate({ path: 'reportedAgainst', populate: { path: 'details', select: 'username profileImage' } })
+            .populate({ path: 'music' })
+            .sort({ createdAt: -1 });
+
+        res.status(200).json(reports);
+    } catch (err) {
+        res.status(500).json({ message: err.message });
     }
 }
 
 async function getPendingReportById(req, res) {
     try {
-        await requireAdmin(req);
+        const report = await Report.findOne({ _id: req.params.id, status: 'pending' })
+            .populate({ path: 'reportedBy', populate: { path: 'details', select: 'username email' } })
+            .populate({ path: 'reportedAgainst', populate: { path: 'details', select: 'username profileImage' } })
+            .populate({ path: 'music' });
 
-        const report = await Report.findOne({
-            _id: req.params.id,
-            status: 'pending'
-        });
-
-        if (!report)
-            return res.status(404).json({ message: 'Report not found' });
-
+        if (!report) return res.status(404).json({ message: 'Report not found' });
         res.status(200).json(report);
     } catch (err) {
-        res.status(err.status || 500).json({ message: err.message });
+        res.status(500).json({ message: err.message });
     }
 }
 
-async function deleteReportFailure(req, res) {
+async function dismissReport(req, res) {
     try {
-        await requireAdmin(req);
+        const report = await Report.findOneAndUpdate(
+            { _id: req.params.id, status: 'pending' },
+            { status: 'dismissed' },
+            { new: true }
+        );
 
-        const report = await Report.findByIdAndDelete(req.params.id);
-        if (!report)
-            return res.status(404).json({ message: 'Report not found' });
-
-        res.status(200).json({ message: 'Report deleted successfully' });
+        if (!report) return res.status(404).json({ message: 'Report not found' });
+        res.status(200).json({ message: 'Report dismissed', report });
     } catch (err) {
-        res.status(err.status || 500).json({ message: err.message });
+        res.status(500).json({ message: err.message });
+    }
+}
+
+async function takeActionOnReport(req, res) {
+    // action: 'remove_music' | 'strike' | 'remove_and_strike' | 'flag_for_edit'
+    const action = (req.body && req.body.action) || 'remove_and_strike';
+
+    if (!['remove_music', 'strike', 'remove_and_strike', 'flag_for_edit'].includes(action)) {
+        return res.status(400).json({ message: 'Invalid action' });
+    }
+
+    try {
+        const report = await Report.findOne({ _id: req.params.id, status: 'pending' });
+        if (!report) return res.status(404).json({ message: 'Report not found' });
+
+        const music = await Music.findById(report.music);
+        if (!music) return res.status(404).json({ message: 'Music not found' });
+
+        const artist = report.reportedAgainst ? await Artist.findById(report.reportedAgainst) : null;
+
+        if (action === 'flag_for_edit') {
+            music.flaggedForEdit = true;
+            await music.save();
+            report.status = 'approved';
+            await report.save();
+            return res.status(200).json({
+                message: 'Report approved; artist must edit song details',
+                report,
+                music,
+            });
+        }
+
+        if (action === 'remove_music' || action === 'remove_and_strike') {
+            music.status = 'removed';
+            await music.save();
+        }
+
+        if (artist && (action === 'strike' || action === 'remove_and_strike')) {
+            artist.policyStrikes = (artist.policyStrikes || 0) + 1;
+            if (artist.policyStrikes >= STRIKES_TO_DEACTIVATE) {
+                artist.status = 'deactivated';
+                await Auth.updateOne({ _id: artist.details }, { $set: { status: 'deactivated' } });
+            }
+            await artist.save();
+        }
+
+        report.status = 'reviewed';
+        await report.save();
+
+        res.status(200).json({
+            message: 'Report reviewed',
+            report,
+            music,
+            artist,
+            strikesToDeactivate: STRIKES_TO_DEACTIVATE,
+        });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
     }
 }
 
 async function getArtistsWithReports(req, res) {
     try {
-        await requireAdmin(req);
+        const artists = await Artist.find({ reports: { $gte: 1 } })
+            .populate({ path: 'details', select: 'username profileImage status' })
+            .sort({ reports: -1, policyStrikes: -1, heartsReceived: -1 });
 
-        const artists = await Artist.find({ reports: { $gte: 1 } });
-        if (!artists.length)
-            return res.status(404).json({ message: 'No artists with reports found' });
-
-        res.status(200).json(artists);
+        res.status(200).json(artists || []);
     } catch (err) {
-        res.status(err.status || 500).json({ message: err.message });
+        res.status(500).json({ message: err.message });
     }
 }
 
-async function deleteArtistById(req, res) {
+async function deactivateArtistById(req, res) {
     try {
-        await requireAdmin(req);
+        const artist = await Artist.findById(req.params.id);
+        if (!artist) return res.status(404).json({ message: 'Artist not found' });
 
-        const artist = await Artist.findOneAndDelete({
-            _id: req.params.id,
-            reports: { $gte: 3 }
-        });
+        artist.status = 'deactivated';
+        await artist.save();
+        await Auth.updateOne({ _id: artist.details }, { $set: { status: 'deactivated' } });
 
-        if (!artist)
-            return res.status(404).json({ message: 'Artist not found or not eligible' });
-
-        res.status(200).json({ message: 'Artist deleted successfully' });
+        res.status(200).json({ message: 'Artist deactivated', artist });
     } catch (err) {
-        res.status(err.status || 500).json({ message: err.message });
+        res.status(500).json({ message: err.message });
     }
 }
 
 async function getMusicWithReports(req, res) {
     try {
-        await requireAdmin(req);
+        const music = await Music.find({ reports: { $gte: 1 } })
+            .populate({ path: 'uploadedBy', populate: { path: 'details', select: 'username profileImage' } })
+            .sort({ reports: -1, createdAt: -1 });
 
-        const music = await Music.find({ reports: { $gte: 1 } });
-        if (!music.length)
-            return res.status(404).json({ message: 'No music with reports found' });
-
-        res.status(200).json(music);
+        res.status(200).json(music || []);
     } catch (err) {
-        res.status(err.status || 500).json({ message: err.message });
+        res.status(500).json({ message: err.message });
     }
 }
 
-async function deleteMusicById(req, res) {
+async function removeMusicById(req, res) {
     try {
-        await requireAdmin(req);
+        const music = await Music.findById(req.params.id);
+        if (!music) return res.status(404).json({ message: 'Music not found' });
 
-        const music = await Music.findOneAndDelete({
-            _id: req.params.id,
-            reports: { $gte: 3 }
-        });
+        music.status = 'removed';
+        await music.save();
 
-        if (!music)
-            return res.status(404).json({ message: 'Music not found or not eligible' });
-
-        res.status(200).json({ message: 'Music deleted successfully' });
+        res.status(200).json({ message: 'Music removed', music });
     } catch (err) {
-        res.status(err.status || 500).json({ message: err.message });
+        res.status(500).json({ message: err.message });
     }
 }
 
-async function updateLikes(req, res) {
+// Admin: list users (emails etc) WITHOUT returning password hashes
+async function getAllUsersForAdmin(req, res) {
     try {
-        await requireUser(req);
+        const users = await Auth.find({})
+            .select('_id username email role status createdAt updatedAt')
+            .sort({ createdAt: -1 });
 
-        const music = await Music.findOneAndUpdate(
-            { _id: req.params.id, status: "approved" },
-            { $inc: { likes: 1 } },
-            { new: true }
-        );
-
-        res.status(200).json(music);
+        res.status(200).json(users || []);
     } catch (err) {
-        res.status(err.status || 500).json({ message: err.message });
+        res.status(500).json({ message: err.message });
     }
 }
 
-async function updatePlays(req, res) {
-    try {
-        await requireUser(req);
-
-        const music = await Music.findOneAndUpdate(
-            { _id: req.params.id, status: "approved" },
-            { $inc: { plays: 1 } },
-            { new: true }
-        );
-
-        res.status(200).json(music);
-    } catch (err) {
-        res.status(err.status || 500).json({ message: err.message });
+// Admin: reset user password (cannot read existing password)
+async function resetUserPassword(req, res) {
+    const password = req.body && req.body.password ? String(req.body.password) : '';
+    if (!password || password.length < 6) {
+        return res.status(400).json({ message: 'Password must be at least 6 characters' });
     }
-}
 
-async function updateReports(req, res) {
     try {
-        await requireUser(req);
-
-        const music = await Music.findOneAndUpdate(
-            { _id: req.params.id, status: "approved" },
-            { $inc: { reports: 1 } },
-            { new: true }
-        );
-
-        res.status(200).json(music);
-    } catch (err) {
-        res.status(err.status || 500).json({ message: err.message });
-    }
-}
-
-async function reportArtist(req, res) {
-    try {
-        await requireUser(req);
-
-        const artist = await Artist.findByIdAndUpdate(
+        const hashed = await bcrypt.hash(password, 10);
+        const user = await Auth.findByIdAndUpdate(
             req.params.id,
-            { $inc: { reports: 1 } },
+            { $set: { password: hashed } },
             { new: true }
-        );
+        ).select('_id username email role status createdAt updatedAt');
 
-        if (!artist)
-            return res.status(404).json({ message: 'Artist not found' });
-
-        res.status(200).json(artist);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+        res.status(200).json({ message: 'Password reset', user });
     } catch (err) {
-        res.status(err.status || 500).json({ message: err.message });
+        res.status(500).json({ message: err.message });
     }
 }
+
 module.exports = {
     getPendingReports,
+    getAllReports,
     getPendingReportById,
-    deleteReportFailure,
+    dismissReport,
+    takeActionOnReport,
     getArtistsWithReports,
-    deleteArtistById,
+    deactivateArtistById,
     getMusicWithReports,
-    deleteMusicById,
-    updateReports,
-    reportArtist
+    removeMusicById,
+    getAllUsersForAdmin,
+    resetUserPassword,
 };

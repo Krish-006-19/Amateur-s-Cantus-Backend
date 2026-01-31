@@ -1,20 +1,152 @@
 require('dotenv').config();
 const express = require("express");
 const app = express();
-const port = 3000;
 const mongoose = require("mongoose");
+const bcrypt = require('bcrypt');
+const path = require('path');
 app.use(require("cookie-parser")());
-app.use(require("cors")());
+
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled rejection:', err);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+});
+
+const cors = require('cors');
+const allowedOrigins = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // allow same-origin, curl/postman (no origin), and dev by default
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.length === 0) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  credentials: true,
+}));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
+// Register models early so mongoose.model(...) works everywhere.
+require('./models/auth.model');
+require('./models/admin.model');
+require('./models/artist.model');
+require('./models/consumer.model');
+require('./models/music.model');
+require('./models/report.model');
+
+// Static local uploads (useful if you ever keep files locally)
+app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads')));
+
+app.get('/health', (_req, res) => res.status(200).json({ ok: true }));
+
+const mongoUri = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/ACantus";
+
+async function ensureDefaultAdmin() {
+  const email = String(process.env.DEFAULT_ADMIN_EMAIL || 'admin24@krishramenadbuser.com')
+    .toLowerCase()
+    .trim();
+  const password = String(process.env.DEFAULT_ADMIN_PASSWORD || '1234567890');
+  const usernameBase = String(process.env.DEFAULT_ADMIN_USERNAME || 'admin24').trim() || 'admin24';
+
+  if (!email || !password) return;
+
+  const Auth = mongoose.model('Auth');
+  const Admin = mongoose.model('Admin');
+
+  let user = await Auth.findOne({ email });
+  if (!user) {
+    const hashed = await bcrypt.hash(password, 10);
+    // Ensure a unique username (email is used for login).
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const username = attempt === 0 ? usernameBase : `${usernameBase}${attempt}`;
+      try {
+        user = await Auth.create({
+          username,
+          email,
+          password: hashed,
+          role: 'admin',
+          status: 'active',
+        });
+        break;
+      } catch (err) {
+        // Duplicate username; retry with a suffix.
+        if (err && err.code === 11000 && (err.keyPattern?.username || err.keyValue?.username)) {
+          continue;
+        }
+        throw err;
+      }
+    }
+  } else {
+    let changed = false;
+
+    if (user.role !== 'admin') {
+      user.role = 'admin';
+      changed = true;
+    }
+
+    if (user.status !== 'active') {
+      user.status = 'active';
+      changed = true;
+    }
+
+    const passwordOk = await bcrypt.compare(password, user.password).catch(() => false);
+    if (!passwordOk) {
+      user.password = await bcrypt.hash(password, 10);
+      changed = true;
+    }
+
+    if (changed) {
+      await user.save();
+    }
+  }
+
+  if (user && user._id) {
+    const adminDoc = await Admin.findOne({ authDetails: user._id });
+    if (!adminDoc) await Admin.create({ authDetails: user._id });
+  }
+}
+
 mongoose
-  .connect("mongodb://127.0.0.1:27017/ACantus")
+  .connect(mongoUri, {
+    serverSelectionTimeoutMS: Number(process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS || 10000),
+    connectTimeoutMS: Number(process.env.MONGO_CONNECT_TIMEOUT_MS || 10000),
+  })
   .then(() => {
     console.log("Mongo connected!");
+    ensureDefaultAdmin()
+      .then(() => console.log('Default admin ensured'))
+      .catch((err) => console.warn('Default admin seed failed:', err && err.message ? err.message : err));
     startOrphanCleaner();
   })
   .catch((err) => console.error(err));
+
+mongoose.connection.on('error', (err) => {
+  console.error('Mongo connection error:', err && err.message ? err.message : err);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.warn('Mongo disconnected');
+});
+
+// Fail fast while DB is down/unreachable (Atlas IP whitelist, bad URI, etc)
+app.use((req, res, next) => {
+  if (req.path === '/health') return next();
+  if (!req.path.startsWith('/api') && !req.path.startsWith('/upload')) return next();
+
+  const ready = mongoose.connection.readyState === 1;
+  if (ready) return next();
+
+  return res.status(503).json({
+    message: 'Database not connected. Check MONGODB_URI and Atlas Network Access (IP whitelist).',
+  });
+});
 
 async function orphanCleaner() {
   try {
@@ -60,7 +192,13 @@ app.use("/api/music", require("./routes/music.route.js"));
 app.use("/api/auth", require("./routes/auth.route.js"));
 app.use("/api/admin", require("./routes/admin.route.js"));
 app.use("/api/report", require("./routes/report.route.js"));
+app.use("/upload", require("./routes/upload.route.js"));
 
-app.listen(port, () => {
-  console.log(`Server is running at http://localhost:${port}`);
+// Error handler (multer/cloudinary/etc)
+app.use((err, _req, res, _next) => {
+  const message = err && err.message ? err.message : 'Server Error';
+  res.status(400).json({ message });
 });
+
+const PORT = Number(process.env.PORT || 5000);
+app.listen(PORT, _=>console.log(`Server is running at http://localhost:${PORT}`));

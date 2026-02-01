@@ -8,6 +8,7 @@ const Admin = require('../models/admin.model');
 const Music = require('../models/music.model');
 const Report = require('../models/report.model');
 const { uploadOnCloudinary, deleteFromCloudinary } = require('../utilities/cloudinary');
+const { hardDeleteAllMusicForArtist } = require('../utilities/cascadeDelete');
 
 function signToken(user) {
     const secret = process.env.JWT_SECRET || 'dev-secret';
@@ -302,7 +303,11 @@ async function deleteMe(req, res) {
             await Report.deleteMany({ reportedBy: consumer._id });
             await Consumer.findByIdAndDelete(consumer._id);
         }
-        if (artist) await Artist.findByIdAndDelete(artist._id);
+        if (artist) {
+            // Cascade delete: remove all songs + Cloudinary assets for this artist
+            await hardDeleteAllMusicForArtist(artist._id);
+            await Artist.findByIdAndDelete(artist._id);
+        }
         if (admin) await Admin.findByIdAndDelete(admin._id);
 
         if (user.profileImagePublicId) {
@@ -320,9 +325,36 @@ async function deleteMe(req, res) {
 
 async function deleteUser(req, res) {
     try {
-        const deletedUser = await Auth.findByIdAndDelete(req.params.id);
-        if(!deletedUser)
-            return res.status(404).json({ message: 'User not found' });
+        const userId = req.params.id;
+        const user = await Auth.findById(userId);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+
+        const consumer = await Consumer.findOne({ details: userId });
+        const artist = await Artist.findOne({ details: userId });
+        const admin = await Admin.findOne({ authDetails: userId });
+
+        if (consumer) {
+            await Music.updateMany({}, { $pull: { likedBy: consumer._id } });
+            await Report.deleteMany({ reportedBy: consumer._id });
+            await Consumer.findByIdAndDelete(consumer._id);
+        }
+
+        if (artist) {
+            await hardDeleteAllMusicForArtist(artist._id);
+            await Artist.findByIdAndDelete(artist._id);
+        }
+
+        if (admin) {
+            await Admin.findByIdAndDelete(admin._id);
+        }
+
+        if (user.profileImagePublicId) {
+            try {
+                await deleteFromCloudinary(user.profileImagePublicId, 'image');
+            } catch (_) {}
+        }
+
+        await Auth.findByIdAndDelete(userId);
         res.status(200).json({ msg: 'User deleted successfully' });
     } catch (error) {
         res.status(500).json({ message: error.message });

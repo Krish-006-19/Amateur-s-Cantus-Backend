@@ -6,6 +6,10 @@ const bcrypt = require('bcrypt');
 const path = require('path');
 app.use(require("cookie-parser")());
 
+// Allow req.ip to respect X-Forwarded-For when behind a proxy (Render/NGINX/etc).
+// This also improves correctness if you ever use IP-based rate limits.
+app.set('trust proxy', 1);
+
 process.on('unhandledRejection', (err) => {
   console.error('Unhandled rejection:', err);
 });
@@ -15,6 +19,7 @@ process.on('uncaughtException', (err) => {
 });
 
 const cors = require('cors');
+const { ensureRedisConnected } = require('./utilities/redis');
 const allowedOrigins = (process.env.CORS_ORIGIN || '')
   .split(',')
   .map(s => s.trim())
@@ -32,6 +37,9 @@ app.use(cors({
 }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+
+// Warm up Redis connection (non-fatal if unavailable)
+ensureRedisConnected().catch(() => {});
 
 // Register models early so mongoose.model(...) works everywhere.
 require('./models/auth.model');
@@ -155,14 +163,21 @@ async function orphanCleaner() {
     const Report = mongoose.model("Report");
     const Consumer = mongoose.model("Consumer");
 
-    const artistIds = await Artist.distinct("_id");
+    const Auth = mongoose.model('Auth');
+
+    // Only active artists with active auth accounts should have visible music.
+    const activeAuthIds = new Set(await Auth.distinct('_id', { status: 'active' }));
+    const activeArtists = await Artist.find({ status: 'active' }).select('_id details');
+    const activeArtistIds = activeArtists
+      .filter((a) => a && a.details && activeAuthIds.has(String(a.details)))
+      .map((a) => a._id);
 
     const musicRes = await Music.deleteMany({
-      uploadedBy: { $nin: artistIds },
+      uploadedBy: { $nin: activeArtistIds },
     });
 
     const reportRes = await Report.deleteMany({
-      reportedAgainst: { $nin: artistIds },
+      reportedAgainst: { $nin: activeArtistIds },
     });
 
     const musicIds = await Music.distinct("_id");
@@ -194,11 +209,10 @@ app.use("/api/admin", require("./routes/admin.route.js"));
 app.use("/api/report", require("./routes/report.route.js"));
 app.use("/upload", require("./routes/upload.route.js"));
 
-// Error handler (multer/cloudinary/etc)
 app.use((err, _req, res, _next) => {
   const message = err && err.message ? err.message : 'Server Error';
   res.status(400).json({ message });
 });
 
-const PORT = Number(process.env.PORT || 5000);
+const PORT = Number(process.env.PORT || 3000);
 app.listen(PORT, _=>console.log(`Server is running at http://localhost:${PORT}`));

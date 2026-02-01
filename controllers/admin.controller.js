@@ -2,7 +2,8 @@ const Report = require('../models/report.model');
 const Artist = require('../models/artist.model');
 const Music = require('../models/music.model');
 const Auth = require('../models/auth.model');
-const bcrypt = require('bcrypt');
+const { hardDeleteMusicById } = require('../utilities/cascadeDelete');
+const { hardDeleteAllMusicForArtist } = require('../utilities/cascadeDelete');
 
 const STRIKES_TO_DEACTIVATE = Number(process.env.STRIKES_TO_DEACTIVATE || 5);
 
@@ -103,6 +104,9 @@ async function takeActionOnReport(req, res) {
             if (artist.policyStrikes >= STRIKES_TO_DEACTIVATE) {
                 artist.status = 'deactivated';
                 await Auth.updateOne({ _id: artist.details }, { $set: { status: 'deactivated' } });
+
+                // Requirement: when an account is deactivated, delete all songs uploaded by that artist (everywhere + Cloudinary).
+                await hardDeleteAllMusicForArtist(artist._id);
             }
             await artist.save();
         }
@@ -143,7 +147,10 @@ async function deactivateArtistById(req, res) {
         await artist.save();
         await Auth.updateOne({ _id: artist.details }, { $set: { status: 'deactivated' } });
 
-        res.status(200).json({ message: 'Artist deactivated', artist });
+        // Requirement: when admin deactivates an artist, delete all their uploaded songs (DB + references + Cloudinary)
+        const deleted = await hardDeleteAllMusicForArtist(artist._id);
+
+        res.status(200).json({ message: 'Artist deactivated', artist, deletedSongs: deleted.deletedCount });
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
@@ -175,6 +182,16 @@ async function removeMusicById(req, res) {
     }
 }
 
+async function hardDeleteMusic(req, res) {
+    try {
+        const result = await hardDeleteMusicById(req.params.id);
+        if (!result || !result.deleted) return res.status(404).json({ message: 'Music not found' });
+        return res.status(200).json({ message: 'Music deleted', id: req.params.id });
+    } catch (err) {
+        return res.status(500).json({ message: err.message });
+    }
+}
+
 // Admin: list users (emails etc) WITHOUT returning password hashes
 async function getAllUsersForAdmin(req, res) {
     try {
@@ -183,28 +200,6 @@ async function getAllUsersForAdmin(req, res) {
             .sort({ createdAt: -1 });
 
         res.status(200).json(users || []);
-    } catch (err) {
-        res.status(500).json({ message: err.message });
-    }
-}
-
-// Admin: reset user password (cannot read existing password)
-async function resetUserPassword(req, res) {
-    const password = req.body && req.body.password ? String(req.body.password) : '';
-    if (!password || password.length < 6) {
-        return res.status(400).json({ message: 'Password must be at least 6 characters' });
-    }
-
-    try {
-        const hashed = await bcrypt.hash(password, 10);
-        const user = await Auth.findByIdAndUpdate(
-            req.params.id,
-            { $set: { password: hashed } },
-            { new: true }
-        ).select('_id username email role status createdAt updatedAt');
-
-        if (!user) return res.status(404).json({ message: 'User not found' });
-        res.status(200).json({ message: 'Password reset', user });
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
@@ -220,6 +215,6 @@ module.exports = {
     deactivateArtistById,
     getMusicWithReports,
     removeMusicById,
+    hardDeleteMusic,
     getAllUsersForAdmin,
-    resetUserPassword,
 };

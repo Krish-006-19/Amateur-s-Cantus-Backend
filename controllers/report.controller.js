@@ -40,12 +40,23 @@ async function createReport(req, res) {
         const consumerDoc = await findConsumerById(consumerId);
         if (!consumerDoc) return res.status(404).json({ message: "Consumer not found" });
 
+        // Prevent spoofing: the authenticated user must own this consumer profile.
+        const isAdmin = (req.userRole || req.user?.role) === 'admin';
+        if (!isAdmin && String(consumerDoc.details) !== String(req.user._id)) {
+            return res.status(403).json({ message: 'Forbidden' });
+        }
+
         const music = await Music.findById(musicId);
         if (!music) return res.status(404).json({ message: "Music not found" });
 
         const artist = await Artist.findById(music.uploadedBy);
         if (!artist) return res.status(404).json({ message: "Artist not found for this song" });
         const artistId = artist._id;
+
+        // Block self-reporting: uploader cannot report their own track.
+        if (!isAdmin && artist.details && String(artist.details) === String(req.user._id)) {
+            return res.status(403).json({ message: 'You cannot report your own song' });
+        }
 
         const newReport = await Report.create({
             reportedBy: consumerDoc._id,

@@ -1,4 +1,6 @@
 const Artist = require('../models/artist.model');
+const { deleteCacheKeys } = require('../middlewares/cache');
+const { artistListKey, artistDetailKey } = require('../utilities/cacheKeys');
 
 async function getAllActiveArtists(req, res) {
     try {
@@ -39,6 +41,7 @@ async function incrementHeartsReceived(req, res) {
         if (!updatedArtist)
             return res.status(404).json({ message: 'Artist not found' });
 
+        await deleteCacheKeys([artistListKey(), artistDetailKey(req.params.id)]);
         res.status(200).json(updatedArtist);
     } catch (err) {
         res.status(500).json({ message: err.message });

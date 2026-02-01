@@ -11,13 +11,12 @@ const {
   deactivateArtistById,
   getMusicWithReports,
   removeMusicById,
+  hardDeleteMusic,
   getAllUsersForAdmin,
-  resetUserPassword
 } = require("../controllers/admin.controller");
 
 // Users (admin-only)
 router.get('/users', requireAdmin, getAllUsersForAdmin);
-router.patch('/users/:id/password', requireAdmin, resetUserPassword);
 
 router.get("/reports", requireAdmin, getAllReports);
 router.get("/reports/:id", requireAdmin, getPendingReportById);
@@ -29,6 +28,7 @@ router.patch("/artists/:id/deactivate", requireAdmin, deactivateArtistById);
 
 router.get("/music/reported", requireAdmin, getMusicWithReports);
 router.patch("/music/:id/remove", requireAdmin, removeMusicById);
+router.delete("/music/:id", requireAdmin, hardDeleteMusic);
 
 // Backward compat aliases
 router.get("/artist/reports", requireAdmin, getArtistsWithReports);

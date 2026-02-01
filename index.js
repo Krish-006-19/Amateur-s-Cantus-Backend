@@ -131,7 +131,12 @@ mongoose
     ensureDefaultAdmin()
       .then(() => console.log('Default admin ensured'))
       .catch((err) => console.warn('Default admin seed failed:', err && err.message ? err.message : err));
-    startOrphanCleaner();
+    const orphanCleanerEnabled = String(process.env.ORPHAN_CLEANER_ENABLED || 'true').toLowerCase() !== 'false';
+    if (orphanCleanerEnabled) {
+      startOrphanCleaner();
+    } else {
+      console.warn('[orphanCleaner] Disabled via ORPHAN_CLEANER_ENABLED=false');
+    }
   })
   .catch((err) => console.error(err));
 
@@ -166,15 +171,29 @@ async function orphanCleaner() {
     const Auth = mongoose.model('Auth');
 
     // Only active artists with active auth accounts should have visible music.
-    const activeAuthIds = new Set(await Auth.distinct('_id', { status: 'active' }));
-    const activeArtists = await Artist.find({ status: 'active' }).select('_id details');
+    // Treat missing status as active (backward compatible) and compare ids as strings.
+    const activeStatusQuery = { $or: [{ status: 'active' }, { status: { $exists: false } }, { status: null }] };
+
+    const activeAuthIds = new Set(
+      (await Auth.distinct('_id', activeStatusQuery)).map((id) => String(id))
+    );
+
+    const activeArtists = await Artist.find(activeStatusQuery).select('_id details');
     const activeArtistIds = activeArtists
       .filter((a) => a && a.details && activeAuthIds.has(String(a.details)))
       .map((a) => a._id);
 
-    const musicRes = await Music.deleteMany({
-      uploadedBy: { $nin: activeArtistIds },
-    });
+    // Safety guard: never delete everything due to an empty active set.
+    if (!activeArtistIds.length) {
+      console.warn('[orphanCleaner] Skipping cleanup: no active artists detected');
+      return;
+    }
+
+    // Non-destructive: do NOT hard delete music. Soft-remove it so it can be recovered.
+    const musicRes = await Music.updateMany(
+      { uploadedBy: { $nin: activeArtistIds }, status: { $ne: 'removed' } },
+      { $set: { status: 'removed' } }
+    );
 
     const reportRes = await Report.deleteMany({
       reportedAgainst: { $nin: activeArtistIds },
@@ -187,8 +206,16 @@ async function orphanCleaner() {
       { $pull: { playlist: { $nin: musicIds } } }
     );
 
+    // Invalidate cache so users don't see stale lists.
+    try {
+      const redis = await ensureRedisConnected();
+      if (redis) await redis.del('cache:music:list');
+    } catch (_) {
+      // ignore
+    }
+
     console.log("Orphan cleanup:", {
-      musicDeleted: musicRes.deletedCount,
+      musicSoftRemoved: musicRes.modifiedCount ?? musicRes.nModified ?? 0,
       reportsDeleted: reportRes.deletedCount,
     });
   } catch (err) {

@@ -53,33 +53,81 @@ async function getConsumerById(req, res) {
     }
 }
 
+// async function addToPlaylist(req, res) {
+//     try {
+//         const consumerDoc = await findConsumerById(req.params.consumerId);
+//         if (!consumerDoc) return res.status(404).json({ message: "Consumer not found" });
+
+//         const consumer = await Consumer.findByIdAndUpdate(
+//             consumerDoc._id,
+//             { $addToSet: { playlist: req.params.musicId } },
+//             { new: true, runValidators: true }
+//         );
+//         res.status(201).json(consumer);
+//     } catch (error) {
+//         res.status(500).json({ message: "Server Error" });
+//     }
+// }
+
 async function addToPlaylist(req, res) {
     try {
-        const consumerDoc = await findConsumerById(req.params.consumerId);
-        if (!consumerDoc) return res.status(404).json({ message: "Consumer not found" });
-
-        const consumer = await Consumer.findByIdAndUpdate(
-            consumerDoc._id,
+        const consumer = await Consumer.findOneAndUpdate(
+            {
+                $or: [
+                    { _id: req.params.consumerId },
+                    { details: req.params.consumerId }
+                ]
+            },
             { $addToSet: { playlist: req.params.musicId } },
-            { new: true, runValidators: true }
+            { new: true }
         );
-        res.status(201).json(consumer);
+
+        if (!consumer) {
+            return res.status(404).json({ message: "Consumer not found" });
+        }
+
+        res.status(200).json(consumer);
+
     } catch (error) {
         res.status(500).json({ message: "Server Error" });
     }
 }
 
+// async function removeFromPlaylist(req, res) {
+//     try {
+//         const consumerDoc = await findConsumerById(req.params.consumerId);
+//         if (!consumerDoc) return res.status(404).json({ message: "Consumer not found" });
+
+//         const consumer = await Consumer.findByIdAndUpdate(
+//             consumerDoc._id,
+//             { $pull: { playlist: req.params.musicId } },
+//             { new: true, runValidators: true }
+//         );
+//         res.status(200).json(consumer);
+//     } catch (error) {
+//         res.status(500).json({ message: "Server Error" });
+//     }
+// }
+
 async function removeFromPlaylist(req, res) {
     try {
-        const consumerDoc = await findConsumerById(req.params.consumerId);
-        if (!consumerDoc) return res.status(404).json({ message: "Consumer not found" });
-
-        const consumer = await Consumer.findByIdAndUpdate(
-            consumerDoc._id,
+        const consumer = await Consumer.findOneAndUpdate(
+            {
+                $or: [
+                    { _id: req.params.consumerId },
+                    { details: req.params.consumerId }
+                ]
+            },
             { $pull: { playlist: req.params.musicId } },
-            { new: true, runValidators: true }
+            { new: true }
         );
+
+        if (!consumer) {
+            return res.status(404).json({ message: "Consumer not found" });
+        }
+
         res.status(200).json(consumer);
+
     } catch (error) {
         res.status(500).json({ message: "Server Error" });
     }

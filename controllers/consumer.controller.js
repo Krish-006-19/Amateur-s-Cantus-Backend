@@ -9,19 +9,45 @@ async function findConsumerById(id) {
     return consumer;
 }
 
+// async function getConsumerById(req, res) {
+//     try {
+//         let consumer = await findConsumerById(req.params.id);
+//         if (!consumer) return res.status(404).json({ message: "Consumer not found" });
+
+//         consumer = await Consumer.findById(consumer._id).populate({
+//             path: "playlist",
+//             populate: {
+//                 path: "uploadedBy",
+//                 populate: { path: "details", select: "username profileImage" },
+//             },
+//         });
+//         res.status(200).json(consumer);
+//     } catch (error) {
+//         res.status(500).json({ message: "Server Error" });
+//     }
+// }
+
 async function getConsumerById(req, res) {
     try {
-        let consumer = await findConsumerById(req.params.id);
-        if (!consumer) return res.status(404).json({ message: "Consumer not found" });
-
-        consumer = await Consumer.findById(consumer._id).populate({
+        const consumer = await Consumer.findOne({
+            $or: [{ _id: req.params.id }, { details: req.params.id }]
+        }).populate({
             path: "playlist",
             populate: {
                 path: "uploadedBy",
-                populate: { path: "details", select: "username profileImage" },
-            },
+                populate: {
+                    path: "details",
+                    select: "username profileImage"
+                }
+            }
         });
+
+        if (!consumer) {
+            return res.status(404).json({ message: "Consumer not found" });
+        }
+
         res.status(200).json(consumer);
+
     } catch (error) {
         res.status(500).json({ message: "Server Error" });
     }

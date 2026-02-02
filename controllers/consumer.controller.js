@@ -1,13 +1,13 @@
 const Consumer = require("../models/consumer.model");
 
 /** Resolve id to Consumer doc: id can be Consumer._id or Auth _id (details) */
-async function findConsumerById(id) {
-    if (!id) return null;
-    let consumer = await Consumer.findById(id);
-    if (consumer) return consumer;
-    consumer = await Consumer.findOne({ details: id });
-    return consumer;
-}
+// async function findConsumerById(id) {
+//     if (!id) return null;
+//     let consumer = await Consumer.findById(id);
+//     if (consumer) return consumer;
+//     consumer = await Consumer.findOne({ details: id });
+//     return consumer;
+// }
 
 // async function getConsumerById(req, res) {
 //     try {

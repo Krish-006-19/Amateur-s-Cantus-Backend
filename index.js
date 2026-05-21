@@ -227,9 +227,6 @@ function startOrphanCleaner() {
   orphanCleaner();
   setInterval(orphanCleaner, 1000 * 60 * 10);
 }
-app.get("/",async(req,res)=>{
-  return {"Status":"ok"};
-})
 app.use("/api/consumer", require("./routes/consumer.route.js"));
 app.use("/api/artist", require("./routes/artist.route.js"));
 app.use("/api/music", require("./routes/music.route.js"));

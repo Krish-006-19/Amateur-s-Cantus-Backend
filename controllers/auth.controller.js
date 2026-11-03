@@ -1,13 +1,12 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const fs = require('fs');
 const Auth = require('../models/auth.model.js');
 const Artist = require('../models/artist.model');
 const Consumer = require('../models/consumer.model');
 const Admin = require('../models/admin.model');
 const Music = require('../models/music.model');
 const Report = require('../models/report.model');
-const { uploadOnCloudinary, deleteFromCloudinary } = require('../utilities/cloudinary');
+const { deleteObject } = require('../utilities/s3');
 const { hardDeleteAllMusicForArtist } = require('../utilities/cascadeDelete');
 
 function signToken(user) {
@@ -134,20 +133,6 @@ async function register(req, res) {
         return res.status(400).json({ message: 'Username, email, and password are required' });
     }
 
-    let profileImageUrl = null;
-    let profileImagePublicId = null;
-    if (req.file && req.file.path) {
-        try {
-            const result = await uploadOnCloudinary(req.file.path, { resource_type: 'image' });
-            if (result) {
-                profileImageUrl = result.url;
-                profileImagePublicId = result.public_id;
-            }
-        } catch (_) {
-            try { fs.unlinkSync(req.file.path); } catch (__) {}
-        }
-    }
-
     try {
         const role = req.body.role;
         const normalizedRole = ['artist', 'admin', 'consumer'].includes(role) ? role : 'consumer';
@@ -157,8 +142,6 @@ async function register(req, res) {
             email,
             password: hashed,
             role: normalizedRole,
-            profileImage: profileImageUrl,
-            profileImagePublicId: profileImagePublicId || undefined,
         });
 
         const profiles = await ensureProfilesForUser(user);
@@ -259,21 +242,6 @@ async function updateMe(req, res) {
         if (email !== undefined) update.email = String(email).toLowerCase().trim();
         if (password !== undefined && password) update.password = await bcrypt.hash(password, 10);
 
-        if (req.file && req.file.path) {
-            const current = await Auth.findById(userId).select('profileImagePublicId');
-            if (current && current.profileImagePublicId) {
-                try {
-                    await deleteFromCloudinary(current.profileImagePublicId, 'image');
-                } catch (_) {}
-            }
-            const result = await uploadOnCloudinary(req.file.path, { resource_type: 'image' });
-            if (result) {
-                update.profileImage = result.url;
-                update.profileImagePublicId = result.public_id;
-            }
-            try { fs.unlinkSync(req.file.path); } catch (_) {}
-        }
-
         const updatedUser = await Auth.findByIdAndUpdate(userId, update, { new: true, runValidators: true }).select('-password');
         if (!updatedUser) return res.status(404).json({ message: 'User not found' });
         const profiles = await ensureProfilesForUser(updatedUser);
@@ -304,16 +272,14 @@ async function deleteMe(req, res) {
             await Consumer.findByIdAndDelete(consumer._id);
         }
         if (artist) {
-            // Cascade delete: remove all songs + Cloudinary assets for this artist
+            // Cascade delete: remove all songs and their S3 assets for this artist.
             await hardDeleteAllMusicForArtist(artist._id);
             await Artist.findByIdAndDelete(artist._id);
         }
         if (admin) await Admin.findByIdAndDelete(admin._id);
 
-        if (user.profileImagePublicId) {
-            try {
-                await deleteFromCloudinary(user.profileImagePublicId, 'image');
-            } catch (_) {}
+        if (user.profileImageKey) {
+            await deleteObject(user.profileImageKey).catch(() => {});
         }
         await Auth.findByIdAndDelete(userId);
 
@@ -348,10 +314,8 @@ async function deleteUser(req, res) {
             await Admin.findByIdAndDelete(admin._id);
         }
 
-        if (user.profileImagePublicId) {
-            try {
-                await deleteFromCloudinary(user.profileImagePublicId, 'image');
-            } catch (_) {}
+        if (user.profileImageKey) {
+            await deleteObject(user.profileImageKey).catch(() => {});
         }
 
         await Auth.findByIdAndDelete(userId);

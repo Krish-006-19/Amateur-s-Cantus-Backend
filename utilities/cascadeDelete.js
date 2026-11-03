@@ -1,7 +1,7 @@
 const Music = require('../models/music.model');
 const Consumer = require('../models/consumer.model');
 const Report = require('../models/report.model');
-const { deleteAudioFromCloudinary, deleteImageFromCloudinary } = require('./cloudinary');
+const { deleteObject } = require('./s3');
 const { deleteCacheKeys } = require('../middlewares/cache');
 const { musicListKey, musicDetailKey } = require('./cacheKeys');
 
@@ -9,7 +9,7 @@ async function hardDeleteMusicById(musicId) {
   if (!musicId) return { deleted: false, reason: 'missing_id' };
 
   const music = await Music.findById(musicId).select(
-    '_id uploadedBy musicAudioPublicId musicImagePublicId'
+    '_id uploadedBy musicAudioKey musicImageKey musicAudioPublicId musicImagePublicId'
   );
   if (!music) return { deleted: false, reason: 'not_found' };
 
@@ -17,12 +17,12 @@ async function hardDeleteMusicById(musicId) {
   await Consumer.updateMany({}, { $pull: { playlist: music._id } }).catch(() => {});
   await Report.deleteMany({ music: music._id }).catch(() => {});
 
-  // Delete Cloudinary assets (best-effort)
-  if (music.musicAudioPublicId) {
-    await deleteAudioFromCloudinary(music.musicAudioPublicId).catch(() => {});
+  // Delete migrated S3 assets (best-effort); legacy public IDs are left untouched.
+  if (music.musicAudioKey) {
+    await deleteObject(music.musicAudioKey).catch(() => {});
   }
-  if (music.musicImagePublicId) {
-    await deleteImageFromCloudinary(music.musicImagePublicId).catch(() => {});
+  if (music.musicImageKey) {
+    await deleteObject(music.musicImageKey).catch(() => {});
   }
 
   await Music.deleteOne({ _id: music._id }).catch(() => {});
@@ -36,7 +36,7 @@ async function hardDeleteAllMusicForArtist(artistId) {
   if (!artistId) return { deletedCount: 0 };
 
   const musicDocs = await Music.find({ uploadedBy: artistId }).select(
-    '_id musicAudioPublicId musicImagePublicId'
+    '_id musicAudioKey musicImageKey musicAudioPublicId musicImagePublicId'
   );
 
   for (const doc of musicDocs) {

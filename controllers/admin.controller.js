@@ -105,7 +105,7 @@ async function takeActionOnReport(req, res) {
                 artist.status = 'deactivated';
                 await Auth.updateOne({ _id: artist.details }, { $set: { status: 'deactivated' } });
 
-                // Requirement: when an account is deactivated, delete all songs uploaded by that artist (everywhere + Cloudinary).
+                // Requirement: when an account is deactivated, delete all songs uploaded by that artist and their S3 objects.
                 await hardDeleteAllMusicForArtist(artist._id);
             }
             await artist.save();
@@ -147,7 +147,7 @@ async function deactivateArtistById(req, res) {
         await artist.save();
         await Auth.updateOne({ _id: artist.details }, { $set: { status: 'deactivated' } });
 
-        // Requirement: when admin deactivates an artist, delete all their uploaded songs (DB + references + Cloudinary)
+        // Requirement: when admin deactivates an artist, delete all their uploaded songs and S3 objects.
         const deleted = await hardDeleteAllMusicForArtist(artist._id);
 
         res.status(200).json({ message: 'Artist deactivated', artist, deletedSongs: deleted.deletedCount });

@@ -2,14 +2,12 @@ const express = require("express");
 const router = express.Router();
 const { optionalUser, requireUser } = require('../middlewares/auth');
 const { cacheJson } = require('../middlewares/cache');
-const { limitSongUploadsPerDay, requireRole } = require('../middlewares/appLimits');
+const { requireRole } = require('../middlewares/appLimits');
 const { musicListKey, musicDetailKey } = require('../utilities/cacheKeys');
-const { uploadMusicFields } = require('../middlewares/multer');
 const {
   getApprovedMusicList,
   getApprovedMusicById,
   getUploadQuota,
-  createMusic,
   updateMusic,
   updateLikes,
   updatePlays,
@@ -37,6 +35,6 @@ router.patch("/:id", requireUser, updateMusic);
 router.delete("/:id", requireUser, deleteMusicById);
 
 // Upload a song (multipart form-data: audio, image, title, genre, description, isPolicyAccepted, artistId?)
-router.post("/", requireUser, limitSongUploadsPerDay, uploadMusicFields, createMusic);
+// Upload bytes via POST /upload/presign, then finalize metadata via POST /upload/music/complete.
 
 module.exports = router;

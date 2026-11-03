@@ -12,16 +12,16 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1161.0",
+    "@aws-sdk/s3-request-presigner": "^3.1161.0",
     "@clerk/express": "^1.7.62",
     "bcrypt": "^6.0.0",
-    "cloudinary": "^2.8.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.1.2",
-    "multer": "^2.0.2",
     "nanoid": "^5.1.6",
     "nodemon": "^3.1.11",
     "redis": "^5.10.0"

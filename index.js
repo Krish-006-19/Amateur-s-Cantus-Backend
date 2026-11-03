@@ -1,9 +1,11 @@
 require('dotenv').config();
 const express = require("express");
 const app = express();
+for (const name of ['AWS_REGION', 'S3_BUCKET', 'MEDIA_BASE_URL']) {
+  if (!process.env[name]) throw new Error(`Missing required environment variable: ${name}`);
+}
 const mongoose = require("mongoose");
 const bcrypt = require('bcrypt');
-const path = require('path');
 app.use(require("cookie-parser")());
 
 // Allow req.ip to respect X-Forwarded-For when behind a proxy (Render/NGINX/etc).
@@ -48,9 +50,6 @@ require('./models/artist.model');
 require('./models/consumer.model');
 require('./models/music.model');
 require('./models/report.model');
-
-// Static local uploads (useful if you ever keep files locally)
-app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads')));
 
 app.get('/health', (_req, res) => res.status(200).json({ ok: true }));
 

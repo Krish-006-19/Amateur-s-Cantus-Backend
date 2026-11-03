@@ -18,6 +18,7 @@ const authSchema = new mongoose.Schema(
     },
     profileImage: { type: String, default: null },
     profileImagePublicId: { type: String, default: null },
+    profileImageKey: { type: String, default: null },
     password: { type: String, required: true, minlength: 6, maxlength: 100 },
     role: {
       type: String,

@@ -1,16 +1,10 @@
-const fs = require("fs");
 const musicModel = require("../models/music.model");
 const Artist = require("../models/artist.model");
 const Consumer = require("../models/consumer.model");
-const { uploadOnCloudinary } = require("../utilities/cloudinary");
 const { hardDeleteMusicById } = require('../utilities/cascadeDelete');
 const { deleteCacheKeys } = require('../middlewares/cache');
 const { musicListKey, musicDetailKey } = require('../utilities/cacheKeys');
 const { SONG_UPLOADS_PER_DAY } = require('../middlewares/appLimits');
-
-const DEFAULT_BANNER_URL =
-  process.env.DEFAULT_BANNER_URL ||
-  "https://via.placeholder.com/512x512.png?text=Amateur%27s+Cantus";
 
 function getUtcDayRange(date = new Date()) {
   const start = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0));
@@ -43,26 +37,6 @@ async function getUploadQuota(req, res) {
   }
 }
 
-async function resolveArtistIdFromRequest(req) {
-  if (req.user && req.user._id) {
-    const artist = await Artist.findOne({ details: req.user._id });
-    if (artist) return artist._id;
-  }
-
-  if (req.body && req.body.artistId) {
-    return req.body.artistId;
-  }
-
-  if (req.query && req.query.artistId) {
-    return req.query.artistId;
-  }
-
-  if (req.params && (req.params.artistId || req.params.id)) {
-    return req.params.artistId || req.params.id;
-  }
-
-  return null;
-}
 
 async function getApprovedMusicList(req, res) {
     try {
@@ -99,109 +73,6 @@ async function getApprovedMusicById(req, res) {
     } catch (error) {
         res.status(500).json({ message: "Server Error" });
     }
-}
-
-async function createMusic(req, res) {
-  const { title, genre, description } = req.body;
-
-  const isPolicyAcceptedRaw = req.body.isPolicyAccepted;
-  const isPolicyAccepted =
-    isPolicyAcceptedRaw === undefined ? true :
-    isPolicyAcceptedRaw === true || isPolicyAcceptedRaw === "true";
-
-  if (!title || !description) {
-    return res.status(400).json({ message: "Title and description are required" });
-  }
-  if (!isPolicyAccepted) {
-    return res.status(400).json({ message: "Content policy must be accepted" });
-  }
-  if (description.length > 500) {
-    return res.status(400).json({ message: "Description exceeds 500 characters" });
-  }
-
-  const audioFile = req.files && req.files.audio && req.files.audio[0];
-  const imageFile = req.files && req.files.image && req.files.image[0];
-  if (!audioFile) {
-    return res.status(400).json({ message: "Audio file (mp3) is required" });
-  }
-
-  try {
-    const artistId = await resolveArtistIdFromRequest(req);
-    if (!artistId) return res.status(400).json({ message: "Artist id is required" });
-
-    const artist = await Artist.findById(artistId);
-    if (!artist) return res.status(404).json({ message: "Artist not found" });
-    if (artist.status !== "active") return res.status(403).json({ message: "Artist account is not active" });
-
-    // Hard guarantee: reject if the artist already uploaded max songs today (UTC).
-    // This is DB-backed, so it reflects successful uploads and works even if Redis is down.
-    const { start, end } = getUtcDayRange(new Date());
-    const uploadedToday = await musicModel.countDocuments({
-      uploadedBy: artist._id,
-      createdAt: { $gte: start, $lt: end },
-    });
-
-    const maxPerDay = Number(SONG_UPLOADS_PER_DAY || 2);
-    if (uploadedToday >= maxPerDay) {
-      return res.status(429).json({ message: `You can upload only ${maxPerDay} songs per day.` });
-    }
-
-    // Upload audio to Cloudinary (try "video" for streaming; fallback "auto" if plan restricts video)
-    let audioUpload;
-    try {
-      audioUpload = await uploadOnCloudinary(audioFile.path, { resource_type: "video" });
-    } catch (audioErr) {
-      try {
-        audioUpload = await uploadOnCloudinary(audioFile.path, { resource_type: "auto" });
-      } catch (autoErr) {
-        try { fs.unlinkSync(audioFile.path); } catch (_) {}
-        return res.status(500).json({
-          message: audioErr?.message || "Failed to upload audio to cloud",
-        });
-      }
-    }
-
-    let imageUrl = DEFAULT_BANNER_URL;
-    let imagePublicId = null;
-    if (imageFile) {
-      try {
-        const imgUpload = await uploadOnCloudinary(imageFile.path, { resource_type: "image" });
-        if (imgUpload) {
-          imageUrl = imgUpload.url;
-          imagePublicId = imgUpload.public_id;
-        }
-      } catch (_) {
-        // keep default banner if image upload fails
-      }
-    }
-
-    const bytes = audioFile.size;
-    if (bytes > 6000000) {
-      return res.status(400).json({ message: "Audio exceeds 6MB" });
-    }
-
-    const newMusic = await musicModel.create({
-      uploadedBy: artist._id,
-      title,
-      genre: genre && String(genre).trim() ? genre : "Unknown",
-      description,
-      isPolicyAccepted,
-      musicAudio: audioUpload.url,
-      musicAudioPublicId: audioUpload.public_id,
-      musicImage: imageUrl,
-      musicImagePublicId: imagePublicId,
-      bytes,
-      format: "mp3",
-      status: "approved",
-    });
-
-    // Invalidate cached lists after new uploads
-    await deleteCacheKeys([musicListKey()]);
-
-    res.status(201).json(newMusic);
-  } catch (error) {
-    res.status(500).json({ message: "Server Error" });
-  }
 }
 
 async function updateMusic(req, res) {
@@ -346,7 +217,6 @@ module.exports = {
     getApprovedMusicList,
     getApprovedMusicById,
   getUploadQuota,
-    createMusic,
     updateMusic,
     updateLikes,
   updatePlays,
